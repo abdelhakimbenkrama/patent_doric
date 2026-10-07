@@ -1,9 +1,9 @@
-# Patent Search Tester (SerpApi · Google Patents + Groq)
+# Patent Search Tester (Google Patents + USPTO Open Data Portal + Groq)
 
 A small FastAPI app with three web pages:
 
-- **Keyword search** (`/`) tests SerpApi's `google_patents` engine directly.
-- **Idea search** (`/idea`): describe an invention in plain language. An LLM (Groq) turns the description into features and Google Patents searches, then compares the closest patents with the idea feature by feature.
+- **Keyword search** (`/`) tests SerpApi's `google_patents` engine or the USPTO Open Data Portal (source switch) directly.
+- **Idea search** (`/idea`): describe an invention in plain language. An LLM (Groq) turns the description into features and Google Patents and USPTO searches, then compares the closest patents with the idea feature by feature. Google Patents and USPTO results are kept in separate tabs.
 - **How it works** (`/how-it-works`): a user-facing explanation of the idea-search approach, costs, tips and limits.
 
 ## Setup
@@ -19,6 +19,7 @@ Put your keys in `.env` (template: `.env.example`):
 ```
 SERPAPI_API_KEY=your_real_key
 GROQ_API_KEY=your_groq_key
+USPTO_API_KEY=your_odp_key   # free: data.uspto.gov -> My API Key (USPTO.gov account + ID.me verification)
 PORT=8765
 # optional
 GROQ_MODEL=openai/gpt-oss-120b
@@ -40,7 +41,7 @@ Then open http://127.0.0.1:8765 (keyword search) or http://127.0.0.1:8765/idea (
 The repo deploys to Vercel as-is: Vercel detects the FastAPI app in `app/main.py`, installs `requirements.txt`, and `vercel.json` allows requests up to 300 seconds (the Hobby plan maximum; the slowest step takes about 2 minutes).
 
 1. In Vercel, **Add New → Project** and import this GitHub repository. Keep the detected settings.
-2. Under **Environment Variables**, add `SERPAPI_API_KEY`, `GROQ_API_KEY` and `APP_PASSWORD` (optionally `GROQ_MODEL`, `GROQ_TPM`).
+2. Under **Environment Variables**, add `SERPAPI_API_KEY`, `GROQ_API_KEY`, `USPTO_API_KEY` and `APP_PASSWORD` (optionally `GROQ_MODEL`, `GROQ_TPM`).
 3. Deploy. Opening the site shows the browser's login prompt: any username, and the `APP_PASSWORD` as password. Without `APP_PASSWORD`, anyone with the URL could spend your SerpApi credits and Groq tokens.
 
 Every push to `main` redeploys. Differences from running locally:
@@ -56,6 +57,8 @@ Every push to `main` redeploys. Differences from running locally:
    - Results are merged, and the LLM screens titles and snippets to pick the top N (default 10).
    - For those, SerpApi's `google_patents_details` fetches the abstract and first claim (1 credit each). The LLM compares 3 patents per call, marking each feature present, partial or absent with a quoted piece of evidence.
 3. **Results**: a similarity score per patent, a feature matrix, which of your features no compared patent discloses, other candidates (each can be compared for about 1 more credit), and JSON export.
+
+**USPTO (separate tab, free):** step 1 also writes 3 title-only queries for the USPTO Open Data Portal (`TI=(…) AND TI=(…)`; ODP searches bibliographic data only, US utility applications filed since 2001). They run alongside the Google Patents searches, are screened on title + CPC, and the top 5 (setting "USPTO patents to compare", 0 skips USPTO) are compared using the abstract and first claim from the USPTO's grant XML, or the pre-grant publication XML when not granted.
 
 **Cost per idea:** about 14 SerpApi credits and 12–15k Groq tokens. It takes 2–4 minutes, because Groq's free tier allows about 8,000 tokens per minute and the app paces its calls to stay under that.
 
@@ -73,9 +76,15 @@ Every push to `main` redeploys. Differences from running locally:
 | `POST /api/idea/analyze` | `{idea}` → features, CPC codes, queries | 0 |
 | `POST /api/idea/candidates` | `{idea, features, queries, filters, num, keep}` → merged, screened candidates | 1 per query (+1 per loosened retry) |
 | `POST /api/idea/compare` | `{idea, features, patents[≤5]}` → per-patent similarity and feature evidence | 1 per patent |
+| `GET /api/uspto/status` | Checks the USPTO ODP key | 0 |
+| `GET /api/uspto/search?q=...` | Proxies a USPTO ODP application search and returns `{summary, results, raw}` | 0 |
+| `POST /api/idea/uspto/candidates` | `{idea, features, queries, filters, num, keep}` → USPTO candidates, screened | 0 |
+| `POST /api/idea/uspto/compare` | `{idea, features, patents[≤5]}` (by `application_number`) → similarity and feature evidence | 0 |
 | `GET /docs` | Interactive Swagger UI | — |
 
 All credit costs drop to 0 when the response is already in `cache/`.
+
+USPTO search parameters: `q` (ODP query; `TI=`, `CPC=`, `APP=`, `INV=` expand to the `applicationMetaData` field names, no prefix matches any field), `page`, `num` (10–100), `sort` (e.g. `applicationMetaData.filingDate desc`), `date_field` + `after`/`before` (`YYYY-MM-DD`), `type` (`UTL`/`DES`/`PLT`/`REI`), `status` (`GRANT`/`APPLICATION`).
 
 Keyword search parameters: `q`, `page`, `num` (10–100), `sort` (`new`/`old`), `before`/`after` (e.g. `priority:20200101`), `inventor`, `assignee`, `country` (e.g. `US,WO`), `language`, `status` (`GRANT`/`APPLICATION`), `type` (`PATENT`/`DESIGN`), `litigation` (`YES`/`NO`), `dups` (`language`), `scholar` (bool).
 

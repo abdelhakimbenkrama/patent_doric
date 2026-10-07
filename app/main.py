@@ -1,4 +1,5 @@
-"""FastAPI proxy for testing SerpApi's Google Patents engine, plus the LLM-assisted idea search.
+"""FastAPI proxy for testing SerpApi's Google Patents engine and the USPTO Open Data Portal,
+plus the LLM-assisted idea search.
 
 API keys stay server-side (loaded from .env); the browser only talks to /api/*.
 """
@@ -10,10 +11,11 @@ import secrets
 from typing import Any
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
+from . import uspto
 from .config import ENV_FILE, STATIC_DIR, get_env
 from .idea_search import router as idea_router
 from .serpapi import ACCOUNT_URL, SEARCH_URL, call_serpapi, get_api_key, normalize_result
@@ -125,6 +127,58 @@ async def search(
         },
         "results": [normalize_result(r) for r in data.get("organic_results", [])],
         "raw": data,
+    }
+
+
+@app.get("/api/uspto/status")
+async def uspto_status() -> dict[str, Any]:
+    """Checks the USPTO ODP key with a one-result search (ODP is free)."""
+    return await uspto.status()
+
+
+@app.get("/api/uspto/search")
+async def uspto_search(
+    q: str | None = Query(None, description='ODP query, e.g. TI=(capsul* AND compost*). TI=, CPC=, APP=, INV= are '
+                                            'shortcuts for applicationMetaData field names; no prefix searches all fields.'),
+    page: int = Query(1, ge=1),
+    num: int = Query(25, ge=10, le=100),
+    sort: str | None = Query(None, pattern=r"^applicationMetaData\.(filingDate|grantDate|earliestPublicationDate) (asc|desc)$"),
+    date_field: str = Query("filingDate", pattern="^(filingDate|effectiveFilingDate|earliestPublicationDate|grantDate)$"),
+    after: str | None = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    before: str | None = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    type: str | None = Query(None, pattern="^(UTL|DES|PLT|REI)$"),
+    status: str | None = Query(None, pattern="^(GRANT|APPLICATION)$"),
+) -> dict[str, Any]:
+    """Proxies a USPTO ODP patent application search (US, filed 2001 or later). Uncached, no credits."""
+    query = uspto.expand_query(q.strip()) if q and q.strip() else "*:*"
+    granted = 'applicationMetaData.publicationCategoryBag:"Granted/Issued"'
+    if status == "GRANT":
+        query = f"({query}) AND {granted}"
+    elif status == "APPLICATION":
+        query = f"({query}) AND NOT {granted}"
+    payload: dict[str, Any] = {"q": query, "pagination": {"offset": (page - 1) * num, "limit": num}}
+    if type:
+        payload["filters"] = [{"name": "applicationMetaData.applicationTypeCode", "value": [type]}]
+    if after or before:
+        payload["rangeFilters"] = [{"field": f"applicationMetaData.{date_field}",
+                                    "valueFrom": after or "1900-01-01", "valueTo": before or "2999-12-31"}]
+    if sort:
+        field, _, order = sort.partition(" ")
+        payload["sort"] = [{"field": field, "order": order}]
+
+    try:
+        data, _ = await uspto.search(payload, use_cache=False)
+    except HTTPException as exc:
+        if exc.status_code == 400:  # usually a query syntax problem; show it like an empty result
+            data = {"count": 0, "patentFileWrapperDataBag": [], "error": exc.detail}
+        else:
+            raise
+    results = [uspto.normalize_result(r) for r in data.get("patentFileWrapperDataBag") or []]
+    return {
+        "summary": {"total_results": data.get("count"), "page": page, "num": num, "query": query,
+                    "error": data.get("error") or (None if results else "No matching USPTO applications.")},
+        "results": results,
+        "raw": {"request": payload, "response": data},
     }
 
 

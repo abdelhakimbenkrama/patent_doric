@@ -101,6 +101,10 @@
   .disclaimer { font-size: 13px; color: var(--muted); border-left: 3px solid var(--border); padding-left: 10px; margin-top: 14px; }
   pre { background: var(--code-bg); color: var(--code-ink); padding: 14px; border-radius: 8px; overflow: auto; max-height: 500px; font-size: 12.5px; }
   .hidden { display: none !important; }
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin: 0 0 16px; flex-wrap: wrap; }
+  .tabs button { border: none; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 8px 14px; color: var(--muted); }
+  .tabs button.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+  .src-tag { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
   @media (max-width: 600px) {
     .card-head { flex-direction: column; gap: 6px; }
     .score { width: auto; text-align: left; display: flex; gap: 10px; align-items: center; }
@@ -110,11 +114,12 @@
 </head>
 <body>
 <header>
-  <h1>Idea Search <small>describe an idea, find similar patents · SerpApi + Groq</small></h1>
+  <h1>Idea Search <small>describe an idea, find similar patents · Google Patents + USPTO · Groq</small></h1>
   <nav>
     <a href="/how-it-works">How it works</a>
     <a href="/">Keyword search →</a>
     <span id="serpBadge" class="badge">SerpApi…</span>
+    <span id="usptoBadge" class="badge">USPTO…</span>
     <span id="llmBadge" class="badge">Groq…</span>
   </nav>
 </header>
@@ -127,7 +132,7 @@
     <details>
       <summary>Filters and settings</summary>
       <div class="grid">
-        <label>Country <input id="country" placeholder="e.g. US,EP,WO (empty = all)"></label>
+        <label>Country (Google Patents) <input id="country" placeholder="e.g. US,EP,WO (empty = all)"></label>
         <label>Date type
           <select id="dateType"><option value="priority">Priority</option><option value="filing">Filing</option><option value="publication">Publication</option></select>
         </label>
@@ -138,8 +143,11 @@
         <label>Results per search
           <select id="num"><option>10</option><option selected>20</option><option>50</option></select>
         </label>
-        <label>Patents to compare in detail
+        <label>Google Patents to compare in detail
           <select id="keep"><option>5</option><option selected>10</option><option>15</option><option>20</option></select>
+        </label>
+        <label>USPTO patents to compare in detail
+          <select id="usptoKeep"><option value="0">0 (skip USPTO)</option><option selected>5</option><option>10</option><option>15</option></select>
         </label>
       </div>
     </details>
@@ -162,10 +170,15 @@
     <h3 class="section">Suggested patent classes (CPC) <span class="hint" style="text-transform:none;letter-spacing:0">· AI guesses, often wrong; not used in the searches</span></h3>
     <div class="chips" id="cpc"></div>
 
-    <h3 class="section">Searches</h3>
+    <h3 class="section">Google Patents searches</h3>
     <div class="hint" style="margin-bottom:8px">Google Patents syntax: groups joined by <code>;</code> must all match, <code>OR</code> inside a group, <code>AB=</code> abstract, <code>TI=</code> title, <code>CL=</code> claims.</div>
     <div id="queries"></div>
     <button type="button" class="small" id="addQuery">+ Add search</button>
+
+    <h3 class="section">USPTO searches <span class="hint" style="text-transform:none;letter-spacing:0">· free · US applications filed since 2001 · results shown separately</span></h3>
+    <div class="hint" style="margin-bottom:8px">The USPTO Open Data Portal only searches titles and bibliographic data: <code>TI=(…)</code> title, <code>CPC=</code> class, groups joined by <code>AND</code>, <code>OR</code> inside a group, <code>*</code> truncation.</div>
+    <div id="usptoQueries"></div>
+    <button type="button" class="small" id="addUsptoQuery">+ Add USPTO search</button>
 
     <div class="actions">
       <button type="button" class="primary" id="runBtn">Find similar patents</button>
@@ -179,34 +192,15 @@
 
   <section id="results" class="hidden">
     <div class="panel">
-      <h2>Summary</h2>
-      <div class="stats" id="stats"></div>
-      <h3 class="section">Your features vs. the compared patents</h3>
-      <div class="novelty" id="novelty"></div>
-      <p class="disclaimer">This is a screening tool, not a legal novelty opinion. It only sees abstracts and first claims, misses applications filed in the last ~18 months (not yet published) and non-patent prior art. Have a patent professional review anything important.</p>
-    </div>
-
-    <div class="panel">
-      <h2>Feature matrix</h2>
-      <div class="hint" style="margin-bottom:8px">✓ disclosed · ~ partly / similar · – not found. Hover a cell for the quoted evidence.</div>
-      <div class="matrix-wrap"><table class="matrix" id="matrix"></table></div>
-    </div>
-
-    <h3 class="section">Most similar patents</h3>
-    <div id="cards"></div>
-
-    <div class="panel">
-      <details>
-        <summary id="othersSummary">Other candidates</summary>
-        <div class="hint" style="margin:8px 0">Screened on title and snippet only. "Compare" fetches details for one more patent (about 1 credit).</div>
-        <div id="others"></div>
-      </details>
-      <details>
-        <summary>Search runs</summary>
-        <div id="runs" style="margin-top:8px"></div>
-      </details>
+      <div class="stats" id="globalStats"></div>
       <div class="actions"><button type="button" id="exportBtn">Export JSON</button></div>
     </div>
+    <div class="tabs" role="tablist">
+      <button type="button" class="active" data-tab="google" id="tab-google">Google Patents</button>
+      <button type="button" data-tab="uspto" id="tab-uspto">USPTO</button>
+    </div>
+    <div id="pane-google" class="pane"></div>
+    <div id="pane-uspto" class="pane hidden"></div>
   </section>
 </main>
 
@@ -216,11 +210,34 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 const BATCH = 3;
 const STATUS = { present: ["✓", "disclosed"], partial: ["~", "partly"], absent: ["–", "not found"] };
 
+// The two sources are searched, compared and shown separately.
+const SRC = {
+  google: {
+    label: "Google Patents",
+    candidatesUrl: "/api/idea/candidates",
+    compareUrl: "/api/idea/compare",
+    payload: (p) => ({ patent_id: p.patent_id, publication_number: p.publication_number, title: p.title, snippet: p.snippet }),
+    link: (p) => p.patent_link || `https://patents.google.com/${(p.patent_id || "").replace(/\/en$/, "")}`,
+    othersHint: `Screened on title and snippet only. "Compare" fetches details for one more patent (about 1 credit).`,
+    disclaimer: "This is a screening tool, not a legal novelty opinion. It only sees abstracts and first claims, misses applications filed in the last ~18 months (not yet published) and non-patent prior art. Have a patent professional review anything important.",
+  },
+  uspto: {
+    label: "USPTO",
+    candidatesUrl: "/api/idea/uspto/candidates",
+    compareUrl: "/api/idea/uspto/compare",
+    payload: (p) => ({ application_number: p.application_number, publication_number: p.publication_number, title: p.title }),
+    link: (p) => p.link,
+    othersHint: `Screened on title and CPC classes only. "Compare" reads the abstract and first claim from the USPTO XML (free).`,
+    disclaimer: "USPTO results come from the Open Data Portal: US applications filed since 2001, found by title only, compared on the abstract and first claim of the granted patent or published application. This is a screening tool, not a legal novelty opinion; it misses foreign patents, unpublished applications and non-patent prior art.",
+  },
+};
+
 // State for the current run.
 let analysis = null;      // /api/idea/analyze response
-let cand = null;          // /api/idea/candidates response
-let compared = [];        // candidate + compare result, merged
+let S = freshState();     // per source: candidates response + compared patents
 let usage = { serpapi: 0, tokens: 0, started: 0 };
+
+function freshState() { return { google: { cand: null, compared: [] }, uspto: { cand: null, compared: [] } }; }
 
 async function api(path, body) {
   const res = await fetch(path, body === undefined ? {} : {
@@ -234,8 +251,12 @@ async function api(path, body) {
   return data;
 }
 
-function showError(e) { $("error").textContent = e.message || String(e); $("error").classList.remove("hidden"); }
-function clearError() { $("error").classList.add("hidden"); }
+function showError(e) {
+  const el = $("error");
+  el.textContent = el.classList.contains("hidden") ? (e.message || String(e)) : `${el.textContent}\n${e.message || e}`;
+  el.classList.remove("hidden");
+}
+function clearError() { $("error").textContent = ""; $("error").classList.add("hidden"); }
 
 let creditsLeft = null;
 async function loadBadges() {
@@ -245,6 +266,10 @@ async function loadBadges() {
     $("serpBadge").textContent = `SerpApi · ${creditsLeft ?? "?"} credits left`;
     updateCost();
   }).catch((e) => { $("serpBadge").className = "badge bad"; $("serpBadge").textContent = "SerpApi key problem"; $("serpBadge").title = e.message; });
+  api("/api/uspto/status").then(() => {
+    $("usptoBadge").className = "badge ok";
+    $("usptoBadge").textContent = "USPTO · free";
+  }).catch((e) => { $("usptoBadge").className = "badge bad"; $("usptoBadge").textContent = "USPTO key problem"; $("usptoBadge").title = e.message; });
   api("/api/llm/status").then((s) => {
     $("llmBadge").className = s.model_available ? "badge ok" : "badge bad";
     $("llmBadge").textContent = `Groq · ${s.model}${s.model_available ? "" : " (not available)"}`;
@@ -274,16 +299,17 @@ function featureRow(f) {
   return row;
 }
 
-function queryRow(q) {
+function queryRow(q, placeholder = "Google Patents query") {
   const row = document.createElement("div");
   row.className = "edit-row query";
-  row.innerHTML = `<div class="grow"><input class="qtext mono" value="${esc(q.q)}" placeholder="Google Patents query">
+  row.innerHTML = `<div class="grow"><input class="qtext mono" value="${esc(q.q)}" placeholder="${esc(placeholder)}">
     ${q.purpose ? `<span class="hint">${esc(q.purpose)}</span>` : ""}</div>
     <button type="button" class="icon" title="Remove">✕</button>`;
   row.querySelector("input").oninput = updateCost;
   row.querySelector("button").onclick = () => { row.remove(); updateCost(); };
   return row;
 }
+const usptoQueryRow = (q) => queryRow(q, "USPTO title query, e.g. TI=(capsul* OR pod*) AND TI=(compost* OR biodegrad*)");
 
 function renumber() { document.querySelectorAll("#features .fid").forEach((el, i) => { el.textContent = `F${i + 1}`; }); }
 
@@ -293,12 +319,15 @@ function currentFeatures() {
     .filter((f) => f.text)
     .map((f, i) => ({ id: `F${i + 1}`, ...f }));
 }
-function currentQueries() { return [...document.querySelectorAll("#queries .qtext")].map((el) => el.value.trim()).filter(Boolean); }
+const queriesIn = (id) => [...document.querySelectorAll(`#${id} .qtext`)].map((el) => el.value.trim()).filter(Boolean);
+const currentQueries = () => queriesIn("queries");
+const currentUsptoQueries = () => (+$("usptoKeep").value ? queriesIn("usptoQueries") : []);
 
 function updateCost() {
-  const n = currentQueries().length, keep = +$("keep").value;
+  const n = currentQueries().length, keep = n ? +$("keep").value : 0, u = currentUsptoQueries().length;
   $("cost").textContent = `Uses up to ${n + keep} SerpApi credits (${n} searches + ${keep} patent details; repeats are free)` +
-    (creditsLeft != null ? ` · ${creditsLeft} left` : "") + ". Takes about 2–4 minutes.";
+    (creditsLeft != null ? ` · ${creditsLeft} left` : "") +
+    (u ? ` · ${u} USPTO searches (free)` : "") + `. Takes about ${u ? "3–5" : "2–4"} minutes.`;
 }
 
 async function analyze(e) {
@@ -313,7 +342,8 @@ async function analyze(e) {
     renumber();
     $("cpc").innerHTML = analysis.cpc_codes.map((c) =>
       `<a class="chip" href="https://patents.google.com/?q=(${encodeURIComponent(c)})" target="_blank" rel="noopener" title="Open in Google Patents">${esc(c)}</a>`).join("") || `<span class="hint">None suggested</span>`;
-    $("queries").replaceChildren(...analysis.queries.map(queryRow));
+    $("queries").replaceChildren(...analysis.queries.map((q) => queryRow(q)));
+    $("usptoQueries").replaceChildren(...(analysis.uspto_queries || []).map(usptoQueryRow));
     updateCost();
     $("analysis").classList.remove("hidden");
     $("analysis").scrollIntoView({ behavior: "smooth", block: "start" });
@@ -321,7 +351,7 @@ async function analyze(e) {
   finally { $("analyzeBtn").disabled = false; $("analyzeBtn").textContent = "Analyze idea"; }
 }
 
-// ---------- steps 2 and 3: candidates + compare ----------
+// ---------- steps 2 and 3: candidates + compare, per source ----------
 
 function step(text) {
   const li = document.createElement("li");
@@ -333,144 +363,267 @@ function step(text) {
   return { done: (t) => set("done", "✓", t), fail: (t) => set("fail", "✗", t), update: (t) => { li.querySelector(".txt").textContent = t; } };
 }
 
-const comparePayload = (p) => ({ patent_id: p.patent_id, publication_number: p.publication_number, title: p.title, snippet: p.snippet });
-
-async function compareBatch(features, batch) {
-  const res = await api("/api/idea/compare", { idea: $("idea").value, features, patents: batch.map(comparePayload) });
-  usage.serpapi += res.serpapi_calls; usage.tokens += res.llm.tokens;
+async function compareBatch(src, features, batch) {
+  const res = await api(SRC[src].compareUrl, { idea: $("idea").value, features, patents: batch.map(SRC[src].payload) });
+  usage.serpapi += res.serpapi_calls || 0; usage.tokens += res.llm.tokens;
+  const compared = S[src].compared;
   batch.forEach((p, i) => compared.push({ ...p, ...res.results[i] }));
   compared.sort((a, b) => (b.similarity ?? -1) - (a.similarity ?? -1));
 }
 
+async function findCandidates(src, features, queries, keep) {
+  const label = SRC[src].label;
+  const s = step(`${label}: running ${queries.length} searches and screening the results…`);
+  try {
+    const cand = await api(SRC[src].candidatesUrl, {
+      idea: $("idea").value, features, queries, filters: filters(), num: +$("num").value, keep,
+    });
+    S[src].cand = cand;
+    usage.serpapi += cand.serpapi_calls || 0; usage.tokens += cand.llm.tokens;
+    const empty = cand.queries.filter((q) => !q.returned).length;
+    s.done(`${label}: ${cand.candidates.length} unique patents from ${queries.length} searches` +
+      (empty ? ` (${empty} search${empty > 1 ? "es" : ""} returned nothing; edit and re-run if needed)` : "") + ".");
+  } catch (err) {
+    s.fail(`${label}: ${err.message}`);
+    showError(new Error(`${label}: ${err.message}`));
+  }
+}
+
+async function compareSelected(src, features) {
+  const cand = S[src].cand;
+  if (!cand?.candidates.length) return;
+  const label = SRC[src].label;
+  const selected = cand.candidates.filter((c) => cand.selected.includes(c.ref));
+  const s = step("");
+  try {
+    for (let i = 0; i < selected.length; i += BATCH) {
+      s.update(`${label}: comparing patents ${i + 1}–${Math.min(i + BATCH, selected.length)} of ${selected.length} with your features (Groq free tier: ~30 s per batch)…`);
+      await compareBatch(src, features, selected.slice(i, i + BATCH));
+      renderResults();
+    }
+    s.done(`${label}: compared ${selected.length} patents in detail.`);
+  } catch (err) {
+    s.fail();
+    showError(new Error(`${label}: ${err.message}`));
+  }
+}
+
 async function run() {
-  const features = currentFeatures(), queries = currentQueries();
+  const features = currentFeatures(), queries = currentQueries(), uQueries = currentUsptoQueries();
   if (!features.length) return showError(new Error("Add at least one feature."));
-  if (!queries.length) return showError(new Error("Add at least one search."));
+  if (!queries.length && !uQueries.length) return showError(new Error("Add at least one search."));
   clearError();
   $("runBtn").disabled = true;
   $("steps").replaceChildren();
   $("progress").classList.remove("hidden");
   $("results").classList.add("hidden");
-  compared = []; cand = null;
+  S = freshState();
   usage = { serpapi: 0, tokens: 0, started: Date.now(), features };
-  let current = null;
+  setupPanes();
+  selectTab(queries.length ? "google" : "uspto");
 
   try {
-    const s1 = current = step(`Running ${queries.length} searches and screening the results…`);
-    cand = await api("/api/idea/candidates", {
-      idea: $("idea").value, features, queries, filters: filters(), num: +$("num").value, keep: +$("keep").value,
-    });
-    usage.serpapi += cand.serpapi_calls; usage.tokens += cand.llm.tokens;
-    const empty = cand.queries.filter((q) => !q.returned).length;
-    s1.done(`${cand.candidates.length} unique patents from ${queries.length} searches` +
-      (empty ? ` (${empty} search${empty > 1 ? "es" : ""} returned nothing; edit and re-run if needed)` : "") + ".");
-    if (!cand.candidates.length) throw new Error("No patents found. Try broader searches (fewer groups, more alternatives, fewer field prefixes).");
-
-    const selected = cand.candidates.filter((c) => cand.selected.includes(c.ref));
-    const s2 = current = step("");
-    for (let i = 0; i < selected.length; i += BATCH) {
-      s2.update(`Comparing patents ${i + 1}–${Math.min(i + BATCH, selected.length)} of ${selected.length} with your features (Groq free tier: ~30 s per batch)…`);
-      await compareBatch(features, selected.slice(i, i + BATCH));
-      renderResults();
+    // Both searches run at once; each source then gets its own comparison.
+    await Promise.all([
+      queries.length && findCandidates("google", features, queries, +$("keep").value),
+      uQueries.length && findCandidates("uspto", features, uQueries, +$("usptoKeep").value),
+    ]);
+    if (!S.google.cand?.candidates.length && !S.uspto.cand?.candidates.length) {
+      throw new Error("No patents found. Try broader searches (fewer groups, more alternatives, fewer field prefixes).");
     }
-    s2.done(`Compared ${selected.length} patents in detail.`);
+    if (!S.google.cand?.candidates.length) selectTab("uspto");
+    renderResults();
+    await compareSelected("google", features);
+    await compareSelected("uspto", features);
   } catch (err) {
     showError(err);
-    current?.fail();
   } finally {
     $("runBtn").disabled = false;
-    if (cand) renderResults();
+    if (S.google.cand || S.uspto.cand) renderResults();
     loadBadges();
   }
 }
 
 // ---------- rendering ----------
 
-function patentLink(p, text) {
-  const href = p.patent_link || `https://patents.google.com/${(p.patent_id || "").replace(/\/en$/, "")}`;
-  return `<a href="${esc(href)}" target="_blank" rel="noopener">${esc(text)}</a>`;
+function patentLink(src, p, text) {
+  return `<a href="${esc(SRC[src].link(p))}" target="_blank" rel="noopener">${esc(text)}</a>`;
+}
+const numberOf = (p) => p.publication_number || p.patent_id || p.application_number;
+
+function setupPanes() {
+  for (const src of Object.keys(SRC)) {
+    $(`pane-${src}`).innerHTML = `
+      <div class="panel">
+        <h2>Summary <span class="src-tag">${esc(SRC[src].label)}</span></h2>
+        <div class="stats js-stats"></div>
+        <h3 class="section">Your features vs. the compared patents</h3>
+        <div class="novelty js-novelty"></div>
+        <p class="disclaimer">${esc(SRC[src].disclaimer)}</p>
+      </div>
+      <div class="panel">
+        <h2>Feature matrix</h2>
+        <div class="hint" style="margin-bottom:8px">✓ disclosed · ~ partly / similar · – not found. Hover a cell for the quoted evidence.</div>
+        <div class="matrix-wrap"><table class="matrix js-matrix"></table></div>
+      </div>
+      <h3 class="section">Most similar patents</h3>
+      <div class="js-cards"></div>
+      <div class="panel">
+        <details>
+          <summary class="js-others-summary">Other candidates</summary>
+          <div class="hint" style="margin:8px 0">${esc(SRC[src].othersHint)}</div>
+          <div class="js-others"></div>
+        </details>
+        <details>
+          <summary>Search runs</summary>
+          <div class="js-runs" style="margin-top:8px"></div>
+        </details>
+      </div>`;
+  }
+}
+
+function selectTab(src) {
+  for (const s of Object.keys(SRC)) {
+    $(`tab-${s}`).classList.toggle("active", s === src);
+    $(`pane-${s}`).classList.toggle("hidden", s !== src);
+  }
 }
 
 function renderResults() {
-  const features = usage.features;
   $("results").classList.remove("hidden");
-
   const secs = Math.round((Date.now() - usage.started) / 1000);
-  $("stats").innerHTML = [
+  $("globalStats").innerHTML = [
+    ["SerpApi credits used", `~${usage.serpapi}`], ["USPTO", "free"],
+    ["Groq tokens", usage.tokens.toLocaleString()], ["Time", `${secs}s`],
+  ].map(([k, v]) => `<span>${k}: <b>${esc(v)}</b></span>`).join("");
+  for (const src of Object.keys(SRC)) {
+    const { cand, compared } = S[src];
+    $(`tab-${src}`).textContent = `${SRC[src].label}${cand ? ` (${compared.length} compared · ${cand.candidates.length} found)` : " (not run)"}`;
+    renderPane(src);
+  }
+}
+
+function renderPane(src) {
+  const pane = $(`pane-${src}`), q = (cls) => pane.querySelector(`.js-${cls}`);
+  const { cand, compared } = S[src];
+  const features = usage.features;
+  if (!cand) {
+    pane.innerHTML = `<div class="panel hint">${src === "uspto"
+      ? "USPTO was not searched (no USPTO searches, “USPTO patents to compare” set to 0, or the search failed)."
+      : "Google Patents was not searched (no searches, or the search failed)."}</div>`;
+    return;
+  }
+
+  q("stats").innerHTML = [
     ["Candidates found", cand.candidates.length], ["Compared in detail", compared.length],
     ["Best match", compared[0]?.similarity != null ? `${compared[0].similarity}/100` : "–"],
-    ["SerpApi credits used", `~${usage.serpapi}`], ["Groq tokens", usage.tokens.toLocaleString()], ["Time", `${secs}s`],
   ].map(([k, v]) => `<span>${k}: <b>${esc(v)}</b></span>`).join("");
 
   // Per feature: the strongest status any compared patent reaches.
   const rank = { present: 2, partial: 1, absent: 0 };
-  $("novelty").innerHTML = features.map((f) => {
+  q("novelty").innerHTML = features.map((f) => {
     let best = "absent", who = [];
     for (const p of compared) {
       const st = p.features.find((x) => x.id === f.id)?.status || "absent";
       if (rank[st] > rank[best]) { best = st; who = []; }
-      if (st === best && st !== "absent") who.push(p.publication_number);
+      if (st === best && st !== "absent") who.push(numberOf(p));
     }
     const label = { present: "Found", partial: "Partly found", absent: "Not found" }[best];
     const where = who.length ? ` <span class="hint">in ${esc(who.slice(0, 4).join(", "))}${who.length > 4 ? ` +${who.length - 4}` : ""}</span>` : "";
     return `<div><span class="tag ${best}">${label}</span><span><b>${f.id}</b> ${esc(f.text)}${where}</span></div>`;
   }).join("") + (compared.length ? `<div class="hint">Features no compared patent discloses are where your idea may be new.</div>` : "");
 
-  $("matrix").innerHTML = `<thead><tr><th>#</th><th>Patent</th><th>Title</th><th>Score</th>${features.map((f) => `<th title="${esc(f.text)}">${f.id}</th>`).join("")}</tr></thead><tbody>` +
-    compared.map((p, i) => `<tr><td>${i + 1}</td><td>${patentLink(p, p.publication_number || p.patent_id)}</td><td class="title">${esc(p.title)}</td><td><b>${p.similarity ?? "–"}</b></td>` +
+  q("matrix").innerHTML = `<thead><tr><th>#</th><th>Patent</th><th>Title</th><th>Score</th>${features.map((f) => `<th title="${esc(f.text)}">${f.id}</th>`).join("")}</tr></thead><tbody>` +
+    compared.map((p, i) => `<tr><td>${i + 1}</td><td>${patentLink(src, p, numberOf(p))}</td><td class="title">${esc(p.title)}</td><td><b>${p.similarity ?? "–"}</b></td>` +
       p.features.map((f) => `<td><span class="cell ${f.status}" title="${esc(`${f.id} ${STATUS[f.status][1]}${f.evidence ? `: "${f.evidence}"` : ""}`)}">${STATUS[f.status][0]}</span></td>`).join("") +
       `</tr>`).join("") + `</tbody>`;
 
-  $("cards").innerHTML = compared.map((p) => {
-    const dates = [["Priority", p.priority_date], ["Published", p.publication_date], ["Granted", p.grant_date]]
-      .filter(([, v]) => v).map(([k, v]) => `<span>${k}: <b>${esc(v)}</b></span>`).join("");
-    const fe = p.features.map((f) => {
-      const text = features.find((x) => x.id === f.id)?.text || "";
-      return `<div class="fe"><span class="tag ${f.status}">${f.id} ${STATUS[f.status][1]}</span><span>${esc(text)}${f.evidence ? ` <q>${esc(f.evidence)}</q>` : ""}</span></div>`;
-    }).join("");
-    const abstract = p.abstract || p.snippet;
-    return `<article class="card"><div class="card-head">
-      <div class="score"><b>${p.similarity ?? "–"}</b><div class="bar"><span style="width:${p.similarity ?? 0}%"></span></div></div>
-      <div class="body">
-        <h4>${patentLink(p, p.title || p.publication_number)}</h4>
-        <div class="meta"><span><b>${esc(p.publication_number)}</b></span>${p.assignee ? `<span>Assignee: <b>${esc(p.assignee)}</b></span>` : ""}${dates}${p.pdf ? `<a href="${esc(p.pdf)}" target="_blank" rel="noopener">PDF</a>` : ""}</div>
-        <p class="explain">${esc(p.explanation)}</p>
-        ${fe}
-        <details><summary>Abstract and first claim</summary>
-          <p class="doc"><b>Abstract${p.abstract ? "" : " (search snippet)"}:</b> ${esc(abstract || "not available")}</p>
-          <p class="doc"><b>First claim:</b> ${esc(p.first_claim || "not available")}</p>
-          ${p.details_error ? `<p class="doc">Details error: ${esc(p.details_error)}</p>` : ""}
-        </details>
-      </div></div></article>`;
-  }).join("");
+  q("cards").innerHTML = compared.map((p) => src === "uspto" ? usptoCard(p) : googleCard(p)).join("") ||
+    `<div class="panel hint">Nothing compared yet.</div>`;
 
   const done = new Set(compared.map((p) => p.ref));
   const others = cand.candidates.filter((c) => !done.has(c.ref));
-  $("othersSummary").textContent = `Other candidates (${others.length})`;
-  $("others").innerHTML = others.map((c) => `<div class="cand"><span class="s" title="Screening score 0–10">${c.screen_score ?? "–"}/10</span>
-    <span class="t">${patentLink(c, c.publication_number)} ${esc(c.title)}</span>
-    <button type="button" class="small" data-ref="${esc(c.ref)}">Compare</button></div>`).join("") || `<span class="hint">None.</span>`;
+  q("others-summary").textContent = `Other candidates (${others.length})`;
+  q("others").innerHTML = others.map((c) => `<div class="cand"><span class="s" title="Screening score 0–10">${c.screen_score ?? "–"}/10</span>
+    <span class="t">${patentLink(src, c, numberOf(c))} ${esc(c.title)}${src === "uspto" && !c.has_full_text ? ` <span class="hint">(no full text)</span>` : ""}</span>
+    <button type="button" class="small" data-src="${src}" data-ref="${esc(c.ref)}">Compare</button></div>`).join("") || `<span class="hint">None.</span>`;
 
-  const runInfo = (q) => `${q.error ? esc(q.error) : `${(q.total_results ?? 0).toLocaleString()} total, top ${q.returned} used`}${q.cached ? " · from cache (free)" : ""}`;
-  $("runs").innerHTML = cand.queries.map((q) => `<div class="cand"><span class="t"><code>${esc(q.q)}</code><br>
-    <span class="hint">${runInfo(q)}</span>
-    ${q.relaxed ? `<br><span class="hint">Too few results, retried looser:</span> <code>${esc(q.relaxed.q)}</code><br><span class="hint">${runInfo(q.relaxed)}</span>` : ""}</span></div>`).join("");
+  const runInfo = (r) => `${r.error ? esc(r.error) : `${(r.total_results ?? 0).toLocaleString()} total, top ${r.returned} used`}${r.cached ? " · from cache (free)" : ""}`;
+  q("runs").innerHTML = cand.queries.map((r) => `<div class="cand"><span class="t"><code>${esc(r.q)}</code><br>
+    <span class="hint">${runInfo(r)}</span>
+    ${r.relaxed ? `<br><span class="hint">Too few results, retried looser:</span> <code>${esc(r.relaxed.q)}</code><br><span class="hint">${runInfo(r.relaxed)}</span>` : ""}</span></div>`).join("");
 }
 
-$("others").addEventListener("click", async (e) => {
-  const ref = e.target.dataset?.ref;
-  if (!ref) return;
+function featureEvidence(p) {
+  return p.features.map((f) => {
+    const text = usage.features.find((x) => x.id === f.id)?.text || "";
+    return `<div class="fe"><span class="tag ${f.status}">${f.id} ${STATUS[f.status][1]}</span><span>${esc(text)}${f.evidence ? ` <q>${esc(f.evidence)}</q>` : ""}</span></div>`;
+  }).join("");
+}
+
+function scoreBox(p) {
+  return `<div class="score"><b>${p.similarity ?? "–"}</b><div class="bar"><span style="width:${p.similarity ?? 0}%"></span></div></div>`;
+}
+
+function googleCard(p) {
+  const dates = [["Priority", p.priority_date], ["Published", p.publication_date], ["Granted", p.grant_date]]
+    .filter(([, v]) => v).map(([k, v]) => `<span>${k}: <b>${esc(v)}</b></span>`).join("");
+  const abstract = p.abstract || p.snippet;
+  return `<article class="card"><div class="card-head">${scoreBox(p)}
+    <div class="body">
+      <h4>${patentLink("google", p, p.title || p.publication_number)}</h4>
+      <div class="meta"><span><b>${esc(p.publication_number)}</b></span>${p.assignee ? `<span>Assignee: <b>${esc(p.assignee)}</b></span>` : ""}${dates}${p.pdf ? `<a href="${esc(p.pdf)}" target="_blank" rel="noopener">PDF</a>` : ""}</div>
+      <p class="explain">${esc(p.explanation)}</p>
+      ${featureEvidence(p)}
+      <details><summary>Abstract and first claim</summary>
+        <p class="doc"><b>Abstract${p.abstract ? "" : " (search snippet)"}:</b> ${esc(abstract || "not available")}</p>
+        <p class="doc"><b>First claim:</b> ${esc(p.first_claim || "not available")}</p>
+        ${p.details_error ? `<p class="doc">Details error: ${esc(p.details_error)}</p>` : ""}
+      </details>
+    </div></div></article>`;
+}
+
+function usptoCard(p) {
+  const dates = [["Filed", p.filing_date], ["Published", p.publication_date], ["Granted", p.grant_date]]
+    .filter(([, v]) => v).map(([k, v]) => `<span>${k}: <b>${esc(v)}</b></span>`).join("");
+  const source = { grant: "granted patent", application: "published application" }[p.text_source];
+  return `<article class="card"><div class="card-head">${scoreBox(p)}
+    <div class="body">
+      <h4>${patentLink("uspto", p, p.title || numberOf(p))}</h4>
+      <div class="meta"><span><b>${esc(p.publication_number || "")}</b> · Appl. ${esc(p.application_number)}</span>${p.applicant ? `<span>Applicant: <b>${esc(p.applicant)}</b></span>` : ""}${dates}</div>
+      ${source ? "" : `<p class="doc"><span class="tag partial">Title only</span> No abstract or claims available from the USPTO, so this comparison is low-confidence.</p>`}
+      <p class="explain">${esc(p.explanation)}</p>
+      ${featureEvidence(p)}
+      <details><summary>Abstract and first claim${source ? ` (from the ${source})` : ""}</summary>
+        <p class="doc"><b>Abstract:</b> ${esc(p.abstract || "not available")}</p>
+        <p class="doc"><b>First claim:</b> ${esc(p.first_claim || "not available")}</p>
+        ${p.cpc?.length ? `<p class="doc"><b>CPC:</b> ${esc(p.cpc.join(", "))}</p>` : ""}
+        ${p.details_error ? `<p class="doc">Details: ${esc(p.details_error)}</p>` : ""}
+      </details>
+    </div></div></article>`;
+}
+
+$("results").addEventListener("click", async (e) => {
+  const tab = e.target.dataset?.tab;
+  if (tab) return selectTab(tab);
+  const { ref, src } = e.target.dataset || {};
+  if (!ref || !src) return;
   e.target.disabled = true; e.target.textContent = "Comparing…";
   clearError();
   try {
-    await compareBatch(usage.features, [cand.candidates.find((c) => c.ref === ref)]);
+    await compareBatch(src, usage.features, [S[src].cand.candidates.find((c) => c.ref === ref)]);
     renderResults();
     loadBadges();
   } catch (err) { showError(err); e.target.disabled = false; e.target.textContent = "Compare"; }
 });
 
 $("exportBtn").addEventListener("click", () => {
-  const data = { idea: $("idea").value, analysis, features: usage.features, filters: filters(), candidates: cand, compared, usage };
+  const data = {
+    idea: $("idea").value, analysis, features: usage.features, filters: filters(),
+    google: { candidates: S.google.cand, compared: S.google.compared },
+    uspto: { candidates: S.uspto.cand, compared: S.uspto.compared },
+    usage,
+  };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
@@ -483,7 +636,9 @@ $("ideaForm").addEventListener("submit", analyze);
 $("runBtn").addEventListener("click", run);
 $("addFeature").addEventListener("click", () => { $("features").appendChild(featureRow({ text: "" })); renumber(); });
 $("addQuery").addEventListener("click", () => { $("queries").appendChild(queryRow({ q: "" })); updateCost(); });
+$("addUsptoQuery").addEventListener("click", () => { $("usptoQueries").appendChild(usptoQueryRow({ q: "" })); updateCost(); });
 $("keep").addEventListener("change", updateCost);
+$("usptoKeep").addEventListener("change", updateCost);
 loadBadges();
 </script>
 </body>
