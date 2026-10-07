@@ -1,0 +1,490 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Idea Search</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #fff; --text: #1c2430; --muted: #5d6878; --border: #dde2e9;
+    --accent: #2f5bd3; --accent-ink: #fff; --ok: #1f7a4d; --ok-bg: #e3f4ea;
+    --warn: #8a5a00; --warn-bg: #fff3d6;
+    --bad: #b3261e; --bad-bg: #fbe9e7; --chip: #eef1f6; --code-bg: #0f1621; --code-ink: #d6e2f0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #10141b; --panel: #171d26; --text: #e4e9f0; --muted: #95a1b2; --border: #2a3341;
+      --accent: #6f93ff; --accent-ink: #0b1020; --ok: #6fd3a0; --ok-bg: #16352a;
+      --warn: #f2c66d; --warn-bg: #3a2f14;
+      --bad: #ff8a80; --bad-bg: #3a1b1b; --chip: #232c39; --code-bg: #0b1017; --code-ink: #c9d6e6;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+           padding: 14px 20px; background: var(--panel); border-bottom: 1px solid var(--border); }
+  header h1 { font-size: 18px; margin: 0; }
+  header h1 small { color: var(--muted); font-weight: 400; font-size: 13px; margin-left: 6px; }
+  header nav { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  header nav a { font-size: 14px; color: var(--accent); text-decoration: none; margin-right: 6px; }
+  .badge { font-size: 13px; padding: 4px 10px; border-radius: 999px; background: var(--chip); color: var(--muted); }
+  .badge.ok { background: var(--ok-bg); color: var(--ok); }
+  .badge.bad { background: var(--bad-bg); color: var(--bad); }
+  main { max-width: 1100px; margin: 0 auto; padding: 20px 16px 60px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  h2 { font-size: 17px; margin: 0 0 6px; }
+  h3.section { font-size: 14px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 18px 0 8px; }
+  textarea, input, select, button { font: inherit; color: inherit; }
+  textarea, input, select { padding: 8px 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg); min-width: 0; }
+  textarea { width: 100%; resize: vertical; }
+  button { padding: 8px 16px; border-radius: 7px; border: 1px solid var(--border); background: var(--panel); cursor: pointer; }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+  button.small { padding: 3px 10px; font-size: 13px; }
+  button.icon { padding: 4px 9px; color: var(--muted); }
+  button:disabled { opacity: .5; cursor: default; }
+  .actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
+  details { margin-top: 12px; }
+  summary { cursor: pointer; color: var(--muted); font-size: 14px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; margin-top: 12px; }
+  label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+  .hint { font-size: 13px; color: var(--muted); }
+  .error { background: var(--bad-bg); color: var(--bad); padding: 10px 14px; border-radius: 8px; margin-bottom: 16px; white-space: pre-wrap; }
+  .edit-row { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 8px; }
+  .edit-row .grow { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+  .edit-row input { width: 100%; }
+  .edit-row input.mono { font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+  .fid { font-weight: 700; font-size: 13px; padding: 7px 0; min-width: 28px; color: var(--accent); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .chip { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: var(--chip); }
+  .steps { list-style: none; padding: 0; margin: 0; }
+  .steps li { padding: 4px 0; font-size: 14px; display: flex; gap: 8px; }
+  .steps .ico { width: 18px; text-align: center; flex-shrink: 0; }
+  .steps li.run { color: var(--text); } .steps li.done { color: var(--muted); } .steps li.fail { color: var(--bad); }
+  .stats { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--muted); }
+  .stats b { color: var(--text); }
+  .novelty { display: grid; gap: 6px; margin-top: 8px; }
+  .novelty div { font-size: 14px; display: flex; gap: 8px; align-items: baseline; }
+  .tag { font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 999px; white-space: nowrap; }
+  .tag.present { background: var(--ok-bg); color: var(--ok); }
+  .tag.partial { background: var(--warn-bg); color: var(--warn); }
+  .tag.absent { background: var(--bad-bg); color: var(--bad); }
+  .matrix-wrap { overflow-x: auto; }
+  table.matrix { border-collapse: collapse; width: 100%; font-size: 13px; }
+  .matrix th, .matrix td { border-bottom: 1px solid var(--border); padding: 6px 8px; text-align: center; white-space: nowrap; }
+  .matrix th:nth-child(-n+3), .matrix td:nth-child(-n+3) { text-align: left; }
+  .matrix td.title { white-space: normal; min-width: 180px; }
+  .matrix a { color: var(--accent); text-decoration: none; }
+  .cell { display: inline-block; width: 22px; height: 22px; line-height: 22px; border-radius: 5px; font-weight: 700; cursor: help; }
+  .cell.present { background: var(--ok-bg); color: var(--ok); }
+  .cell.partial { background: var(--warn-bg); color: var(--warn); }
+  .cell.absent { background: var(--chip); color: var(--muted); }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin-bottom: 10px; }
+  .card-head { display: flex; gap: 14px; align-items: flex-start; }
+  .score { flex-shrink: 0; width: 58px; text-align: center; }
+  .score b { font-size: 22px; display: block; line-height: 1.1; }
+  .score .bar { height: 5px; background: var(--chip); border-radius: 3px; margin-top: 4px; overflow: hidden; }
+  .score .bar span { display: block; height: 100%; background: var(--accent); }
+  .card .body { min-width: 0; flex: 1; }
+  .card h4 { margin: 0 0 4px; font-size: 16px; }
+  .card h4 a { color: var(--accent); text-decoration: none; }
+  .card h4 a:hover { text-decoration: underline; }
+  .meta { font-size: 13px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 14px; }
+  .meta b { color: var(--text); font-weight: 600; }
+  .explain { margin: 8px 0; font-size: 14px; }
+  .fe { font-size: 13px; margin: 4px 0; display: flex; gap: 8px; align-items: baseline; }
+  .fe q { color: var(--muted); font-style: italic; }
+  .doc { font-size: 13px; color: var(--muted); margin: 6px 0 0; }
+  .cand { display: flex; gap: 10px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
+  .cand .s { width: 40px; color: var(--muted); font-size: 13px; flex-shrink: 0; }
+  .cand .t { flex: 1; min-width: 0; }
+  .cand a { color: var(--accent); text-decoration: none; }
+  .disclaimer { font-size: 13px; color: var(--muted); border-left: 3px solid var(--border); padding-left: 10px; margin-top: 14px; }
+  pre { background: var(--code-bg); color: var(--code-ink); padding: 14px; border-radius: 8px; overflow: auto; max-height: 500px; font-size: 12.5px; }
+  .hidden { display: none !important; }
+  @media (max-width: 600px) {
+    .card-head { flex-direction: column; gap: 6px; }
+    .score { width: auto; text-align: left; display: flex; gap: 10px; align-items: center; }
+    .score .bar { width: 80px; margin: 0; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Idea Search <small>describe an idea, find similar patents · SerpApi + Groq</small></h1>
+  <nav>
+    <a href="/how-it-works">How it works</a>
+    <a href="/">Keyword search →</a>
+    <span id="serpBadge" class="badge">SerpApi…</span>
+    <span id="llmBadge" class="badge">Groq…</span>
+  </nav>
+</header>
+
+<main>
+  <form id="ideaForm" class="panel">
+    <label for="idea">Describe your idea in plain language: what it is, how it works, and what makes it different.</label>
+    <textarea id="idea" rows="5" style="margin-top:6px" minlength="20" maxlength="4000" required
+      placeholder="e.g. A single-use coffee capsule made from a seaweed-based material instead of plastic or aluminium. After brewing it dissolves in water or can be composted at home within a few weeks."></textarea>
+    <details>
+      <summary>Filters and settings</summary>
+      <div class="grid">
+        <label>Country <input id="country" placeholder="e.g. US,EP,WO (empty = all)"></label>
+        <label>Date type
+          <select id="dateType"><option value="priority">Priority</option><option value="filing">Filing</option><option value="publication">Publication</option></select>
+        </label>
+        <label>Before <input type="date" id="beforeDate"></label>
+        <label>Status
+          <select id="status"><option value="">Any</option><option value="GRANT">Granted only</option><option value="APPLICATION">Applications only</option></select>
+        </label>
+        <label>Results per search
+          <select id="num"><option>10</option><option selected>20</option><option>50</option></select>
+        </label>
+        <label>Patents to compare in detail
+          <select id="keep"><option>5</option><option selected>10</option><option>15</option><option>20</option></select>
+        </label>
+      </div>
+    </details>
+    <div class="actions">
+      <button type="submit" class="primary" id="analyzeBtn">Analyze idea</button>
+      <span class="hint">Step 1 uses no SerpApi credits. You can review the searches before anything is spent.</span>
+    </div>
+  </form>
+
+  <div id="error" class="error hidden"></div>
+
+  <section id="analysis" class="panel hidden">
+    <h2 id="aTitle"></h2>
+    <div class="hint" id="aSummary"></div>
+
+    <h3 class="section">Key features</h3>
+    <div id="features"></div>
+    <button type="button" class="small" id="addFeature">+ Add feature</button>
+
+    <h3 class="section">Suggested patent classes (CPC) <span class="hint" style="text-transform:none;letter-spacing:0">· AI guesses, often wrong; not used in the searches</span></h3>
+    <div class="chips" id="cpc"></div>
+
+    <h3 class="section">Searches</h3>
+    <div class="hint" style="margin-bottom:8px">Google Patents syntax: groups joined by <code>;</code> must all match, <code>OR</code> inside a group, <code>AB=</code> abstract, <code>TI=</code> title, <code>CL=</code> claims.</div>
+    <div id="queries"></div>
+    <button type="button" class="small" id="addQuery">+ Add search</button>
+
+    <div class="actions">
+      <button type="button" class="primary" id="runBtn">Find similar patents</button>
+      <span class="hint" id="cost"></span>
+    </div>
+  </section>
+
+  <section id="progress" class="panel hidden">
+    <ul class="steps" id="steps"></ul>
+  </section>
+
+  <section id="results" class="hidden">
+    <div class="panel">
+      <h2>Summary</h2>
+      <div class="stats" id="stats"></div>
+      <h3 class="section">Your features vs. the compared patents</h3>
+      <div class="novelty" id="novelty"></div>
+      <p class="disclaimer">This is a screening tool, not a legal novelty opinion. It only sees abstracts and first claims, misses applications filed in the last ~18 months (not yet published) and non-patent prior art. Have a patent professional review anything important.</p>
+    </div>
+
+    <div class="panel">
+      <h2>Feature matrix</h2>
+      <div class="hint" style="margin-bottom:8px">✓ disclosed · ~ partly / similar · – not found. Hover a cell for the quoted evidence.</div>
+      <div class="matrix-wrap"><table class="matrix" id="matrix"></table></div>
+    </div>
+
+    <h3 class="section">Most similar patents</h3>
+    <div id="cards"></div>
+
+    <div class="panel">
+      <details>
+        <summary id="othersSummary">Other candidates</summary>
+        <div class="hint" style="margin:8px 0">Screened on title and snippet only. "Compare" fetches details for one more patent (about 1 credit).</div>
+        <div id="others"></div>
+      </details>
+      <details>
+        <summary>Search runs</summary>
+        <div id="runs" style="margin-top:8px"></div>
+      </details>
+      <div class="actions"><button type="button" id="exportBtn">Export JSON</button></div>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const BATCH = 3;
+const STATUS = { present: ["✓", "disclosed"], partial: ["~", "partly"], absent: ["–", "not found"] };
+
+// State for the current run.
+let analysis = null;      // /api/idea/analyze response
+let cand = null;          // /api/idea/candidates response
+let compared = [];        // candidate + compare result, merged
+let usage = { serpapi: 0, tokens: 0, started: 0 };
+
+async function api(path, body) {
+  const res = await fetch(path, body === undefined ? {} : {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const d = data.detail;
+    throw new Error(typeof d === "string" ? d : JSON.stringify(d ?? data) || `HTTP ${res.status}`);
+  }
+  return data;
+}
+
+function showError(e) { $("error").textContent = e.message || String(e); $("error").classList.remove("hidden"); }
+function clearError() { $("error").classList.add("hidden"); }
+
+let creditsLeft = null;
+async function loadBadges() {
+  api("/api/account").then((a) => {
+    creditsLeft = a.total_searches_left;
+    $("serpBadge").className = "badge ok";
+    $("serpBadge").textContent = `SerpApi · ${creditsLeft ?? "?"} credits left`;
+    updateCost();
+  }).catch((e) => { $("serpBadge").className = "badge bad"; $("serpBadge").textContent = "SerpApi key problem"; $("serpBadge").title = e.message; });
+  api("/api/llm/status").then((s) => {
+    $("llmBadge").className = s.model_available ? "badge ok" : "badge bad";
+    $("llmBadge").textContent = `Groq · ${s.model}${s.model_available ? "" : " (not available)"}`;
+  }).catch((e) => { $("llmBadge").className = "badge bad"; $("llmBadge").textContent = "Groq key problem"; $("llmBadge").title = e.message; });
+}
+
+// ---------- step 1: analyze ----------
+
+function filters() {
+  const before = $("beforeDate").value;
+  return {
+    country: $("country").value.trim() || null,
+    before: before ? `${$("dateType").value}:${before.replaceAll("-", "")}` : null,
+    status: $("status").value || null,
+  };
+}
+
+function featureRow(f) {
+  const row = document.createElement("div");
+  row.className = "edit-row feature";
+  row.innerHTML = `<span class="fid"></span>
+    <div class="grow"><input class="ftext" value="${esc(f.text)}" placeholder="Feature of your idea">
+    ${f.terms?.length ? `<span class="hint">Search terms: ${esc(f.terms.join(", "))}</span>` : ""}</div>
+    <button type="button" class="icon" title="Remove">✕</button>`;
+  row.dataset.terms = JSON.stringify(f.terms || []);
+  row.querySelector("button").onclick = () => { row.remove(); renumber(); };
+  return row;
+}
+
+function queryRow(q) {
+  const row = document.createElement("div");
+  row.className = "edit-row query";
+  row.innerHTML = `<div class="grow"><input class="qtext mono" value="${esc(q.q)}" placeholder="Google Patents query">
+    ${q.purpose ? `<span class="hint">${esc(q.purpose)}</span>` : ""}</div>
+    <button type="button" class="icon" title="Remove">✕</button>`;
+  row.querySelector("input").oninput = updateCost;
+  row.querySelector("button").onclick = () => { row.remove(); updateCost(); };
+  return row;
+}
+
+function renumber() { document.querySelectorAll("#features .fid").forEach((el, i) => { el.textContent = `F${i + 1}`; }); }
+
+function currentFeatures() {
+  return [...document.querySelectorAll("#features .feature")]
+    .map((row) => ({ text: row.querySelector(".ftext").value.trim(), terms: JSON.parse(row.dataset.terms) }))
+    .filter((f) => f.text)
+    .map((f, i) => ({ id: `F${i + 1}`, ...f }));
+}
+function currentQueries() { return [...document.querySelectorAll("#queries .qtext")].map((el) => el.value.trim()).filter(Boolean); }
+
+function updateCost() {
+  const n = currentQueries().length, keep = +$("keep").value;
+  $("cost").textContent = `Uses up to ${n + keep} SerpApi credits (${n} searches + ${keep} patent details; repeats are free)` +
+    (creditsLeft != null ? ` · ${creditsLeft} left` : "") + ". Takes about 2–4 minutes.";
+}
+
+async function analyze(e) {
+  e.preventDefault();
+  clearError();
+  $("analyzeBtn").disabled = true; $("analyzeBtn").textContent = "Analyzing…";
+  try {
+    analysis = await api("/api/idea/analyze", { idea: $("idea").value });
+    $("aTitle").textContent = analysis.title;
+    $("aSummary").textContent = analysis.summary;
+    $("features").replaceChildren(...analysis.features.map(featureRow));
+    renumber();
+    $("cpc").innerHTML = analysis.cpc_codes.map((c) =>
+      `<a class="chip" href="https://patents.google.com/?q=(${encodeURIComponent(c)})" target="_blank" rel="noopener" title="Open in Google Patents">${esc(c)}</a>`).join("") || `<span class="hint">None suggested</span>`;
+    $("queries").replaceChildren(...analysis.queries.map(queryRow));
+    updateCost();
+    $("analysis").classList.remove("hidden");
+    $("analysis").scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (err) { showError(err); }
+  finally { $("analyzeBtn").disabled = false; $("analyzeBtn").textContent = "Analyze idea"; }
+}
+
+// ---------- steps 2 and 3: candidates + compare ----------
+
+function step(text) {
+  const li = document.createElement("li");
+  li.className = "run";
+  li.innerHTML = `<span class="ico">⏳</span><span class="txt"></span>`;
+  li.querySelector(".txt").textContent = text;
+  $("steps").appendChild(li);
+  const set = (cls, ico, t) => { li.className = cls; li.querySelector(".ico").textContent = ico; if (t) li.querySelector(".txt").textContent = t; };
+  return { done: (t) => set("done", "✓", t), fail: (t) => set("fail", "✗", t), update: (t) => { li.querySelector(".txt").textContent = t; } };
+}
+
+const comparePayload = (p) => ({ patent_id: p.patent_id, publication_number: p.publication_number, title: p.title, snippet: p.snippet });
+
+async function compareBatch(features, batch) {
+  const res = await api("/api/idea/compare", { idea: $("idea").value, features, patents: batch.map(comparePayload) });
+  usage.serpapi += res.serpapi_calls; usage.tokens += res.llm.tokens;
+  batch.forEach((p, i) => compared.push({ ...p, ...res.results[i] }));
+  compared.sort((a, b) => (b.similarity ?? -1) - (a.similarity ?? -1));
+}
+
+async function run() {
+  const features = currentFeatures(), queries = currentQueries();
+  if (!features.length) return showError(new Error("Add at least one feature."));
+  if (!queries.length) return showError(new Error("Add at least one search."));
+  clearError();
+  $("runBtn").disabled = true;
+  $("steps").replaceChildren();
+  $("progress").classList.remove("hidden");
+  $("results").classList.add("hidden");
+  compared = []; cand = null;
+  usage = { serpapi: 0, tokens: 0, started: Date.now(), features };
+  let current = null;
+
+  try {
+    const s1 = current = step(`Running ${queries.length} searches and screening the results…`);
+    cand = await api("/api/idea/candidates", {
+      idea: $("idea").value, features, queries, filters: filters(), num: +$("num").value, keep: +$("keep").value,
+    });
+    usage.serpapi += cand.serpapi_calls; usage.tokens += cand.llm.tokens;
+    const empty = cand.queries.filter((q) => !q.returned).length;
+    s1.done(`${cand.candidates.length} unique patents from ${queries.length} searches` +
+      (empty ? ` (${empty} search${empty > 1 ? "es" : ""} returned nothing; edit and re-run if needed)` : "") + ".");
+    if (!cand.candidates.length) throw new Error("No patents found. Try broader searches (fewer groups, more alternatives, fewer field prefixes).");
+
+    const selected = cand.candidates.filter((c) => cand.selected.includes(c.ref));
+    const s2 = current = step("");
+    for (let i = 0; i < selected.length; i += BATCH) {
+      s2.update(`Comparing patents ${i + 1}–${Math.min(i + BATCH, selected.length)} of ${selected.length} with your features (Groq free tier: ~30 s per batch)…`);
+      await compareBatch(features, selected.slice(i, i + BATCH));
+      renderResults();
+    }
+    s2.done(`Compared ${selected.length} patents in detail.`);
+  } catch (err) {
+    showError(err);
+    current?.fail();
+  } finally {
+    $("runBtn").disabled = false;
+    if (cand) renderResults();
+    loadBadges();
+  }
+}
+
+// ---------- rendering ----------
+
+function patentLink(p, text) {
+  const href = p.patent_link || `https://patents.google.com/${(p.patent_id || "").replace(/\/en$/, "")}`;
+  return `<a href="${esc(href)}" target="_blank" rel="noopener">${esc(text)}</a>`;
+}
+
+function renderResults() {
+  const features = usage.features;
+  $("results").classList.remove("hidden");
+
+  const secs = Math.round((Date.now() - usage.started) / 1000);
+  $("stats").innerHTML = [
+    ["Candidates found", cand.candidates.length], ["Compared in detail", compared.length],
+    ["Best match", compared[0]?.similarity != null ? `${compared[0].similarity}/100` : "–"],
+    ["SerpApi credits used", `~${usage.serpapi}`], ["Groq tokens", usage.tokens.toLocaleString()], ["Time", `${secs}s`],
+  ].map(([k, v]) => `<span>${k}: <b>${esc(v)}</b></span>`).join("");
+
+  // Per feature: the strongest status any compared patent reaches.
+  const rank = { present: 2, partial: 1, absent: 0 };
+  $("novelty").innerHTML = features.map((f) => {
+    let best = "absent", who = [];
+    for (const p of compared) {
+      const st = p.features.find((x) => x.id === f.id)?.status || "absent";
+      if (rank[st] > rank[best]) { best = st; who = []; }
+      if (st === best && st !== "absent") who.push(p.publication_number);
+    }
+    const label = { present: "Found", partial: "Partly found", absent: "Not found" }[best];
+    const where = who.length ? ` <span class="hint">in ${esc(who.slice(0, 4).join(", "))}${who.length > 4 ? ` +${who.length - 4}` : ""}</span>` : "";
+    return `<div><span class="tag ${best}">${label}</span><span><b>${f.id}</b> ${esc(f.text)}${where}</span></div>`;
+  }).join("") + (compared.length ? `<div class="hint">Features no compared patent discloses are where your idea may be new.</div>` : "");
+
+  $("matrix").innerHTML = `<thead><tr><th>#</th><th>Patent</th><th>Title</th><th>Score</th>${features.map((f) => `<th title="${esc(f.text)}">${f.id}</th>`).join("")}</tr></thead><tbody>` +
+    compared.map((p, i) => `<tr><td>${i + 1}</td><td>${patentLink(p, p.publication_number || p.patent_id)}</td><td class="title">${esc(p.title)}</td><td><b>${p.similarity ?? "–"}</b></td>` +
+      p.features.map((f) => `<td><span class="cell ${f.status}" title="${esc(`${f.id} ${STATUS[f.status][1]}${f.evidence ? `: "${f.evidence}"` : ""}`)}">${STATUS[f.status][0]}</span></td>`).join("") +
+      `</tr>`).join("") + `</tbody>`;
+
+  $("cards").innerHTML = compared.map((p) => {
+    const dates = [["Priority", p.priority_date], ["Published", p.publication_date], ["Granted", p.grant_date]]
+      .filter(([, v]) => v).map(([k, v]) => `<span>${k}: <b>${esc(v)}</b></span>`).join("");
+    const fe = p.features.map((f) => {
+      const text = features.find((x) => x.id === f.id)?.text || "";
+      return `<div class="fe"><span class="tag ${f.status}">${f.id} ${STATUS[f.status][1]}</span><span>${esc(text)}${f.evidence ? ` <q>${esc(f.evidence)}</q>` : ""}</span></div>`;
+    }).join("");
+    const abstract = p.abstract || p.snippet;
+    return `<article class="card"><div class="card-head">
+      <div class="score"><b>${p.similarity ?? "–"}</b><div class="bar"><span style="width:${p.similarity ?? 0}%"></span></div></div>
+      <div class="body">
+        <h4>${patentLink(p, p.title || p.publication_number)}</h4>
+        <div class="meta"><span><b>${esc(p.publication_number)}</b></span>${p.assignee ? `<span>Assignee: <b>${esc(p.assignee)}</b></span>` : ""}${dates}${p.pdf ? `<a href="${esc(p.pdf)}" target="_blank" rel="noopener">PDF</a>` : ""}</div>
+        <p class="explain">${esc(p.explanation)}</p>
+        ${fe}
+        <details><summary>Abstract and first claim</summary>
+          <p class="doc"><b>Abstract${p.abstract ? "" : " (search snippet)"}:</b> ${esc(abstract || "not available")}</p>
+          <p class="doc"><b>First claim:</b> ${esc(p.first_claim || "not available")}</p>
+          ${p.details_error ? `<p class="doc">Details error: ${esc(p.details_error)}</p>` : ""}
+        </details>
+      </div></div></article>`;
+  }).join("");
+
+  const done = new Set(compared.map((p) => p.ref));
+  const others = cand.candidates.filter((c) => !done.has(c.ref));
+  $("othersSummary").textContent = `Other candidates (${others.length})`;
+  $("others").innerHTML = others.map((c) => `<div class="cand"><span class="s" title="Screening score 0–10">${c.screen_score ?? "–"}/10</span>
+    <span class="t">${patentLink(c, c.publication_number)} ${esc(c.title)}</span>
+    <button type="button" class="small" data-ref="${esc(c.ref)}">Compare</button></div>`).join("") || `<span class="hint">None.</span>`;
+
+  const runInfo = (q) => `${q.error ? esc(q.error) : `${(q.total_results ?? 0).toLocaleString()} total, top ${q.returned} used`}${q.cached ? " · from cache (free)" : ""}`;
+  $("runs").innerHTML = cand.queries.map((q) => `<div class="cand"><span class="t"><code>${esc(q.q)}</code><br>
+    <span class="hint">${runInfo(q)}</span>
+    ${q.relaxed ? `<br><span class="hint">Too few results, retried looser:</span> <code>${esc(q.relaxed.q)}</code><br><span class="hint">${runInfo(q.relaxed)}</span>` : ""}</span></div>`).join("");
+}
+
+$("others").addEventListener("click", async (e) => {
+  const ref = e.target.dataset?.ref;
+  if (!ref) return;
+  e.target.disabled = true; e.target.textContent = "Comparing…";
+  clearError();
+  try {
+    await compareBatch(usage.features, [cand.candidates.find((c) => c.ref === ref)]);
+    renderResults();
+    loadBadges();
+  } catch (err) { showError(err); e.target.disabled = false; e.target.textContent = "Compare"; }
+});
+
+$("exportBtn").addEventListener("click", () => {
+  const data = { idea: $("idea").value, analysis, features: usage.features, filters: filters(), candidates: cand, compared, usage };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `idea-search-${(analysis?.title || "result").toLowerCase().replace(/[^a-z0-9]+/g, "-")}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+$("ideaForm").addEventListener("submit", analyze);
+$("runBtn").addEventListener("click", run);
+$("addFeature").addEventListener("click", () => { $("features").appendChild(featureRow({ text: "" })); renumber(); });
+$("addQuery").addEventListener("click", () => { $("queries").appendChild(queryRow({ q: "" })); updateCost(); });
+$("keep").addEventListener("change", updateCost);
+loadBadges();
+</script>
+</body>
+</html>

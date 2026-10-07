@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How Idea Search Works</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #fff; --text: #1c2430; --muted: #5d6878; --border: #dde2e9;
+    --accent: #2f5bd3; --accent-ink: #fff; --accent-soft: #e8eefc; --ok: #1f7a4d; --ok-bg: #e3f4ea;
+    --warn: #8a5a00; --warn-bg: #fff3d6; --bad: #b3261e; --bad-bg: #fbe9e7; --chip: #eef1f6;
+    --llm: #6b3fc9; --llm-bg: #f0e9fd; --serp: #1f7a4d; --serp-bg: #e3f4ea;
+    --code-bg: #0f1621; --code-ink: #d6e2f0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #10141b; --panel: #171d26; --text: #e4e9f0; --muted: #95a1b2; --border: #2a3341;
+      --accent: #6f93ff; --accent-ink: #0b1020; --accent-soft: #1d2740; --ok: #6fd3a0; --ok-bg: #16352a;
+      --warn: #f2c66d; --warn-bg: #3a2f14; --bad: #ff8a80; --bad-bg: #3a1b1b; --chip: #232c39;
+      --llm: #b89cff; --llm-bg: #2a2140; --serp: #6fd3a0; --serp-bg: #16352a;
+      --code-bg: #0b1017; --code-ink: #c9d6e6;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+           padding: 14px 20px; background: var(--panel); border-bottom: 1px solid var(--border); }
+  header h1 { font-size: 18px; margin: 0; }
+  header nav { display: flex; gap: 16px; flex-wrap: wrap; }
+  header nav a { font-size: 14px; color: var(--accent); text-decoration: none; }
+  main { max-width: 860px; margin: 0 auto; padding: 28px 16px 80px; }
+  h2 { font-size: 22px; margin: 44px 0 10px; scroll-margin-top: 16px; }
+  h3 { font-size: 17px; margin: 26px 0 6px; }
+  p, li { max-width: 72ch; }
+  a { color: var(--accent); }
+  code { font: 13.5px ui-monospace, Consolas, monospace; background: var(--chip); padding: 1px 5px; border-radius: 4px; }
+  pre { background: var(--code-bg); color: var(--code-ink); padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 13px; }
+  pre code { background: none; padding: 0; color: inherit; }
+  .lead { font-size: 18px; color: var(--muted); margin-top: 0; }
+  .toc { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 18px; font-size: 15px; }
+  .toc ol { margin: 6px 0 0; padding-left: 20px; columns: 2; column-gap: 32px; }
+  @media (max-width: 600px) { .toc ol { columns: 1; } }
+
+  /* pipeline diagram */
+  .flow { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin: 22px 0 8px; }
+  .flow .node { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px; font-size: 13px; position: relative; }
+  .flow .node b { display: block; font-size: 14px; margin-bottom: 2px; }
+  .flow .node .who { display: inline-block; font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; margin-bottom: 6px; }
+  .who.llm { background: var(--llm-bg); color: var(--llm); }
+  .who.serp { background: var(--serp-bg); color: var(--serp); }
+  .who.you { background: var(--accent-soft); color: var(--accent); }
+  .flow .node .cost { color: var(--muted); font-size: 12px; margin-top: 4px; }
+  .flow .node:not(:last-child)::after { content: "→"; position: absolute; right: -9px; top: 50%; transform: translate(50%, -50%); color: var(--muted); font-size: 14px; }
+  @media (max-width: 760px) {
+    .flow { grid-template-columns: 1fr; }
+    .flow .node:not(:last-child)::after { content: "↓"; right: 50%; top: auto; bottom: -8px; transform: translate(50%, 50%); }
+  }
+  .legend { font-size: 13px; color: var(--muted); display: flex; gap: 14px; flex-wrap: wrap; }
+
+  .step { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 4px 20px 14px; margin: 16px 0; }
+  .step h3 { display: flex; align-items: center; gap: 10px; }
+  .num { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%;
+         background: var(--accent); color: var(--accent-ink); font-size: 14px; flex-shrink: 0; }
+  .facts { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
+  .fact { font-size: 12.5px; padding: 2px 9px; border-radius: 999px; background: var(--chip); color: var(--muted); }
+  .why { border-left: 3px solid var(--accent); padding: 2px 0 2px 12px; color: var(--muted); font-size: 15px; }
+
+  table { border-collapse: collapse; width: 100%; font-size: 14.5px; margin: 10px 0; }
+  th, td { border-bottom: 1px solid var(--border); padding: 7px 10px; text-align: left; vertical-align: top; }
+  th { font-size: 13px; color: var(--muted); font-weight: 600; }
+  .table-wrap { overflow-x: auto; }
+  .tag { font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 999px; white-space: nowrap; }
+  .tag.present { background: var(--ok-bg); color: var(--ok); }
+  .tag.partial { background: var(--warn-bg); color: var(--warn); }
+  .tag.absent { background: var(--bad-bg); color: var(--bad); }
+  .note { background: var(--warn-bg); color: var(--text); border-radius: 8px; padding: 12px 16px; margin: 14px 0; font-size: 15px; }
+  .note b { color: var(--warn); }
+  .cta { display: inline-block; margin-top: 8px; padding: 9px 18px; border-radius: 7px; background: var(--accent); color: var(--accent-ink); text-decoration: none; font-weight: 600; }
+</style>
+</head>
+<body>
+<header>
+  <h1>How Idea Search works</h1>
+  <nav>
+    <a href="/idea">Idea search →</a>
+    <a href="/">Keyword search →</a>
+    <a href="/docs">API (Swagger) →</a>
+  </nav>
+</header>
+
+<main>
+  <p class="lead">You describe an invention in plain language. The app looks for existing patents that describe the same or a similar idea and shows, feature by feature, how each one overlaps with yours.</p>
+
+  <nav class="toc" aria-label="Contents">
+    <b>On this page</b>
+    <ol>
+      <li><a href="#overview">The approach in one picture</a></li>
+      <li><a href="#why-ai">Why an AI model is involved</a></li>
+      <li><a href="#steps">The five steps in detail</a></li>
+      <li><a href="#reading">How to read the results</a></li>
+      <li><a href="#cost">Cost, speed and limits</a></li>
+      <li><a href="#tips">Tips for better results</a></li>
+      <li><a href="#limits">What it can't do</a></li>
+      <li><a href="#tech">Under the hood</a></li>
+    </ol>
+  </nav>
+
+  <!-- 1 -->
+  <h2 id="overview">1. The approach in one picture</h2>
+  <p>Patent databases search by keywords, not by meaning. The app adds an AI model on both sides of the keyword search: before, to turn your description into good patent searches, and after, to read the results and judge how close each one is to your idea.</p>
+
+  <div class="flow" role="list" aria-label="Pipeline">
+    <div class="node" role="listitem"><span class="who you">You</span><b>Describe</b>the idea in plain words<div class="cost">free</div></div>
+    <div class="node" role="listitem"><span class="who llm">AI</span><b>Analyze</b>features + 4 searches<div class="cost">0 credits</div></div>
+    <div class="node" role="listitem"><span class="who serp">Google Patents</span><b>Search</b>run the 4 searches<div class="cost">~4 credits</div></div>
+    <div class="node" role="listitem"><span class="who llm">AI</span><b>Screen</b>pick the 10 most likely<div class="cost">0 credits</div></div>
+    <div class="node" role="listitem"><span class="who serp">Google Patents</span><b>Details</b>abstract + first claim<div class="cost">~10 credits</div></div>
+    <div class="node" role="listitem"><span class="who llm">AI</span><b>Compare</b>feature by feature<div class="cost">0 credits</div></div>
+  </div>
+  <div class="legend">
+    <span><span class="who llm" style="padding:1px 7px;border-radius:999px;font-weight:700;font-size:11px">AI</span> Groq, model <code>openai/gpt-oss-120b</code></span>
+    <span><span class="who serp" style="padding:1px 7px;border-radius:999px;font-weight:700;font-size:11px">Google Patents</span> via SerpApi (uses search credits)</span>
+  </div>
+
+  <!-- 2 -->
+  <h2 id="why-ai">2. Why an AI model is involved</h2>
+  <p>A plain keyword search can't do this job well, for two reasons:</p>
+  <ul>
+    <li><b>Your words aren't patent words.</b> You might write "dissolves" and "seaweed"; a patent says "water-soluble" and "alginate". If you paste your description straight into a patent search, every word must match, and you usually get no results or the wrong ones. The AI rewrites the idea in the vocabulary patent drafters use and adds synonyms.</li>
+    <li><b>Search results are sorted by keyword match, not by similarity.</b> A search returns dozens of patents that share some words with your idea. The AI reads each one and decides how many of your idea's features it actually describes.</li>
+  </ul>
+  <p>The AI never invents patents. Every patent shown comes from Google Patents, and every "feature found" verdict comes with a quote from the patent text so you can check it.</p>
+
+  <!-- 3 -->
+  <h2 id="steps">3. The five steps in detail</h2>
+
+  <div class="step">
+    <h3><span class="num">1</span>Analyze the idea</h3>
+    <div class="facts"><span class="fact">AI, 1 call</span><span class="fact">0 SerpApi credits</span><span class="fact">~5 seconds</span></div>
+    <p>The AI reads your description and returns:</p>
+    <ul>
+      <li><b>A title and a one-sentence technical summary.</b></li>
+      <li><b>3–7 key features</b>, labelled F1, F2, … These are the elements a patent claim for your idea would need, for example "F1: the capsule is made from a seaweed-derived material". They are the yardstick for everything that follows.</li>
+      <li><b>4 Google Patents searches</b>, each pairing the product with one distinctive feature, written in patent vocabulary.</li>
+      <li><b>Suggested patent classes (CPC)</b>, shown for information only. In testing these guesses were often wrong, so they are not used in the searches.</li>
+    </ul>
+    <p>Nothing is spent yet. You can edit, add or remove features and searches before going on.</p>
+    <p>The searches use Google Patents syntax:</p>
+    <pre><code>AB=("coffee capsule" OR "coffee pod" OR "beverage capsule");AB=(seaweed OR alginate OR algae*)</code></pre>
+    <table>
+      <tr><th>Syntax</th><th>Meaning</th></tr>
+      <tr><td><code>;</code></td><td>separates groups; every group must match</td></tr>
+      <tr><td><code>OR</code></td><td>any one of the alternatives inside a group</td></tr>
+      <tr><td><code>AB=( )</code> <code>TI=( )</code> <code>CL=( )</code></td><td>the group must match in the abstract, title or claims</td></tr>
+      <tr><td><code>"two words"</code></td><td>exact phrase</td></tr>
+      <tr><td><code>algae*</code></td><td>any word starting with "algae"</td></tr>
+    </table>
+    <p class="why">Why field limits like <code>AB=</code>? Without them a word can match anywhere in a 50-page patent. In testing, <code>(seaweed OR algae);(capsule OR pod)</code> matched 131,000 patents, and the top results were mostly unrelated (microcapsules, tissue engineering). Limiting every group to abstracts and adding a "coffee" group brought it down to 80, many of them actual coffee capsules.</p>
+  </div>
+
+  <div class="step">
+    <h3><span class="num">2</span>Search Google Patents</h3>
+    <div class="facts"><span class="fact">SerpApi</span><span class="fact">1 credit per search</span><span class="fact">runs in parallel</span></div>
+    <p>The 4 searches run at the same time, and the top 20 results of each are kept (you can change this under "Filters and settings"). Your filters (country, date, granted only) apply to every search.</p>
+    <p>If a search returns fewer than 5 results, the app automatically retries it once in a looser form, using 1 extra credit. It drops the last group, or lets the second group match anywhere in the text. The "Search runs" section of the results shows when this happened.</p>
+    <p>Results from all searches are merged, and a patent found by several searches appears once. A typical idea yields 40–80 unique candidates.</p>
+  </div>
+
+  <div class="step">
+    <h3><span class="num">3</span>Screen the candidates</h3>
+    <div class="facts"><span class="fact">AI, 1 call per 25 candidates</span><span class="fact">0 credits</span></div>
+    <p>The AI reads only the title and the short search snippet of each candidate and gives it a score from 0 to 10:</p>
+    <table>
+      <tr><th>Score</th><th>Meaning</th></tr>
+      <tr><td>9–10</td><td>essentially the same invention</td></tr>
+      <tr><td>6–8</td><td>same problem and several of the key features</td></tr>
+      <tr><td>3–5</td><td>same field, few of the features</td></tr>
+      <tr><td>0–2</td><td>unrelated</td></tr>
+    </table>
+    <p>The 10 highest-scoring candidates go on to detailed comparison. Ties are broken by how many searches found the patent. The rest stay available under "Other candidates".</p>
+    <p class="why">Why screen first? Fetching a patent's full details costs a credit, so this cheap first pass decides which patents are worth it.</p>
+  </div>
+
+  <div class="step">
+    <h3><span class="num">4</span>Fetch patent details</h3>
+    <div class="facts"><span class="fact">SerpApi</span><span class="fact">1 credit per patent</span></div>
+    <p>For each of the 10 selected patents the app fetches the <b>abstract</b> and the <b>first claim</b>. The first claim is the broadest legal definition of what the patent protects. For patents in other languages it uses Google's English translation of the claims. Some patents (for example many granted European ones) have no abstract, and then the search snippet is used instead.</p>
+  </div>
+
+  <div class="step">
+    <h3><span class="num">5</span>Compare feature by feature</h3>
+    <div class="facts"><span class="fact">AI, 1 call per 3 patents</span><span class="fact">0 credits</span><span class="fact">~30 s per batch</span></div>
+    <p>The AI compares each patent's abstract and first claim with every one of your features and marks it:</p>
+    <ul>
+      <li><span class="tag present">disclosed</span> the patent clearly describes this feature</li>
+      <li><span class="tag partial">partly</span> it describes something similar, broader or narrower</li>
+      <li><span class="tag absent">not found</span> the feature isn't mentioned</li>
+    </ul>
+    <p>Each verdict comes with a short quote from the patent as evidence. The AI also gives an overall <b>similarity score from 0 to 100</b> and one or two sentences naming the main overlap and the main difference. Results appear on the page after each batch of 3, so you can start reading before the run finishes.</p>
+  </div>
+
+  <!-- 4 -->
+  <h2 id="reading">4. How to read the results</h2>
+  <h3>Similarity score</h3>
+  <table>
+    <tr><th>Score</th><th>Meaning</th></tr>
+    <tr><td>90–100</td><td>the same invention</td></tr>
+    <tr><td>70–89</td><td>most of your key features</td></tr>
+    <tr><td>40–69</td><td>a related approach</td></tr>
+    <tr><td>below 40</td><td>same field only</td></tr>
+  </table>
+
+  <h3>"Your features vs. the compared patents"</h3>
+  <p>For each of your features, this shows the strongest match among all compared patents: <span class="tag present">Found</span>, <span class="tag partial">Partly found</span> or <span class="tag absent">Not found</span>, and in which patents. <b>Features that are "Not found" in every compared patent are where your idea may be new.</b> A feature found in some patent doesn't by itself mean your idea isn't new: what matters is whether a single patent combines all of your features.</p>
+
+  <h3>Feature matrix</h3>
+  <p>One row per patent, one column per feature (✓ / ~ / –). Hover a cell to see the quoted evidence. A row with ✓ in every column is the strongest warning sign.</p>
+
+  <h3>Other candidates</h3>
+  <p>Patents that were found but not compared in detail, with their screening score. "Compare" on any of them fetches its details and adds it to the results (about 1 credit).</p>
+
+  <!-- 5 -->
+  <h2 id="cost">5. Cost, speed and limits</h2>
+  <div class="table-wrap"><table>
+    <tr><th></th><th>Per idea</th><th>Account limit</th></tr>
+    <tr><td>SerpApi credits</td><td>about 14 (4 searches + 10 patent details, plus 1 per loosened retry)</td><td>Free plan: 250 per month, so about 15–17 ideas</td></tr>
+    <tr><td>Groq tokens</td><td>about 12,000–15,000</td><td>Free tier: 8,000 per minute, 200,000 per day</td></tr>
+    <tr><td>Time</td><td>2–4 minutes</td><td>mostly waiting for Groq's per-minute limit</td></tr>
+  </table></div>
+  <p><b>Repeats are free.</b> Every Google Patents and AI response is saved on the server, so running the same searches again, or comparing a patent you compared before, costs no credits and is near-instant. The cost line under the "Find similar patents" button shows the maximum before you start, and the badges in the header show credits left and the AI model.</p>
+
+  <!-- 6 -->
+  <h2 id="tips">6. Tips for better results</h2>
+  <ul>
+    <li><b>Describe how it works, not just what it is.</b> Say what the parts are, how they interact, and what makes it different from existing products. "A capsule made of a seaweed-based film that dissolves in hot water" works better than "eco-friendly coffee pod".</li>
+    <li><b>Check the features before you search.</b> If the AI misread your idea or added something you didn't say, fix it. Every comparison is measured against this list.</li>
+    <li><b>Edit the searches when results look off.</b> Use short words with <code>*</code> (<code>rotat*</code>) instead of long phrases, add synonyms an engineer or lawyer would use, and use 2 groups rather than 3. Check "Search runs" to see which searches returned little.</li>
+    <li><b>Use generic, older terms too.</b> Patents from the 1990s and 2000s say "portable electronic device" rather than "smartphone" and "network" rather than "cloud". Adding such terms helps find older patents.</li>
+    <li><b>Use the date filter</b> ("Before" plus a date) to look only at patents filed before a given day, e.g. before your own filing date.</li>
+  </ul>
+
+  <!-- 7 -->
+  <h2 id="limits">7. What it can't do</h2>
+  <div class="note"><b>This is a screening tool, not a legal opinion.</b> Before filing a patent or making a business decision, have a patent attorney or professional searcher review the results.</div>
+  <ul>
+    <li><b>It reads only the abstract and the first claim</b>, not the full description or the drawings, where many details live.</li>
+    <li><b>Recent applications are invisible.</b> Patent applications are published about 18 months after filing, so anything filed recently can't be found by any tool.</li>
+    <li><b>Patents only.</b> Scientific papers, products on the market and other non-patent prior art are not searched.</li>
+    <li><b>It can miss well-known patents.</b> In tests with famous patents described in plain words (slide-to-unlock, a bladeless fan, one-click buying), the app found closely related patents every time but missed the original famous patent each time, because the AI-written searches use modern wording. Editing the searches helps.</li>
+    <li><b>The AI can make mistakes.</b> Check the quoted evidence for any patent that matters, and open the patent itself via its link.</li>
+    <li><b>Patent class suggestions (CPC) are unreliable</b> and only shown for reference.</li>
+  </ul>
+
+  <!-- 8 -->
+  <h2 id="tech">8. Under the hood</h2>
+  <p>For developers. The app is a small Python (FastAPI) server with plain HTML pages; there is no build step.</p>
+  <div class="table-wrap"><table>
+    <tr><th>Part</th><th>Role</th></tr>
+    <tr><td><code>app/idea_search.py</code></td><td>The three API steps, the AI instructions (prompts) and the fixed answer formats</td></tr>
+    <tr><td><code>app/llm.py</code></td><td>Groq client. Forces the AI to answer in a fixed JSON format, paces calls to stay under the per-minute token limit, retries when rate-limited</td></tr>
+    <tr><td><code>app/serpapi.py</code></td><td>SerpApi client for Google Patents search (<code>google_patents</code>) and patent details (<code>google_patents_details</code>)</td></tr>
+    <tr><td><code>app/cache.py</code></td><td>Saves every SerpApi and Groq response in <code>cache/</code>; delete that folder to clear it</td></tr>
+    <tr><td><code>static/idea.html</code></td><td>The Idea search page; it calls the steps in order and renders the results</td></tr>
+  </table></div>
+  <div class="table-wrap"><table>
+    <tr><th>Endpoint</th><th>Does</th><th>Credits</th></tr>
+    <tr><td><code>POST /api/idea/analyze</code></td><td>idea → features, CPC guesses, 4 searches</td><td>0</td></tr>
+    <tr><td><code>POST /api/idea/candidates</code></td><td>runs the searches, merges, screens, picks the top N</td><td>1 per search</td></tr>
+    <tr><td><code>POST /api/idea/compare</code></td><td>details + feature comparison for up to 5 patents</td><td>1 per patent</td></tr>
+    <tr><td><code>GET /api/llm/status</code>, <code>GET /api/account</code></td><td>check the Groq and SerpApi keys</td><td>0</td></tr>
+  </table></div>
+  <p>The API keys (<code>SERPAPI_API_KEY</code>, <code>GROQ_API_KEY</code>) stay on the server in <code>.env</code>; the browser never sees them. Each step is stateless: the page sends the output of one step as the input to the next. Full endpoint details are in the <a href="/docs">Swagger UI</a>.</p>
+
+  <p><a class="cta" href="/idea">Try Idea search →</a></p>
+</main>
+</body>
+</html>
