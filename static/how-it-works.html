@@ -199,6 +199,18 @@
     <p>Each verdict comes with a short quote from the patent as evidence. The AI also gives an overall <b>similarity score from 0 to 100</b> and one or two sentences naming the main overlap and the main difference. Results appear on the page after each batch of 3, so you can start reading before the run finishes.</p>
   </div>
 
+  <div class="step">
+    <h3><span class="num">+</span>USPTO search, shown separately</h3>
+    <div class="facts"><span class="fact">USPTO Open Data Portal</span><span class="fact">free</span><span class="fact">US applications filed since 2001</span></div>
+    <p>Alongside Google Patents, the app also searches the US Patent and Trademark Office's own database. Its results appear in a separate <b>USPTO</b> tab and are never mixed with the Google Patents results.</p>
+    <ul>
+      <li><b>Searches.</b> Step 1 also writes 3 USPTO searches. The USPTO database can only search titles and bibliographic data (no abstracts or claims), so these searches are title-only and broader, for example <code>TI=(capsul* OR pod* OR cartridg*) AND TI=(compost* OR biodegrad* OR seaweed)</code>. Only utility applications are searched, and a search that finds fewer than 5 is retried once with its first group only.</li>
+      <li><b>Screening</b> works as in step 3, but on the title and patent classes (CPC), since there is no snippet. The top 5 go on to the comparison (changeable under "Filters and settings"; 0 skips USPTO).</li>
+      <li><b>Comparison</b> works as in step 5. The abstract and first claim come from the USPTO's own full text of the granted patent, or of the published application if it hasn't been granted. When neither is available, the card says "Title only" and the verdict is low-confidence.</li>
+    </ul>
+    <p class="why">Why keep it separate? The two sources search differently (full text vs. titles), cover different ground (worldwide vs. US since 2001) and use different text for the comparison. Seeing them side by side shows what each one found that the other missed.</p>
+  </div>
+
   <!-- 4 -->
   <h2 id="reading">4. How to read the results</h2>
   <h3>Similarity score</h3>
@@ -225,7 +237,8 @@
     <tr><th></th><th>Per idea</th><th>Account limit</th></tr>
     <tr><td>SerpApi credits</td><td>about 14 (4 searches + 10 patent details, plus 1 per loosened retry)</td><td>Free plan: 250 per month, so about 15–17 ideas</td></tr>
     <tr><td>Groq tokens</td><td>about 12,000–15,000</td><td>Free tier: 8,000 per minute, 200,000 per day</td></tr>
-    <tr><td>Time</td><td>2–4 minutes</td><td>mostly waiting for Groq's per-minute limit</td></tr>
+    <tr><td>USPTO requests</td><td>3 searches + 2 per compared patent</td><td>free with a USPTO API key</td></tr>
+    <tr><td>Time</td><td>2–4 minutes (3–5 with USPTO)</td><td>mostly waiting for Groq's per-minute limit</td></tr>
   </table></div>
   <p><b>Repeats are free.</b> Every Google Patents and AI response is saved on the server, so running the same searches again, or comparing a patent you compared before, costs no credits and is near-instant. The cost line under the "Find similar patents" button shows the maximum before you start, and the badges in the header show credits left and the AI model.</p>
 
@@ -245,6 +258,7 @@
   <ul>
     <li><b>It reads only the abstract and the first claim</b>, not the full description or the drawings, where many details live.</li>
     <li><b>Recent applications are invisible.</b> Patent applications are published about 18 months after filing, so anything filed recently can't be found by any tool.</li>
+    <li><b>The USPTO search only sees titles</b> of US applications filed since 2001, so a patent with an unusual title is easy to miss there; Google Patents covers it by full text.</li>
     <li><b>Patents only.</b> Scientific papers, products on the market and other non-patent prior art are not searched.</li>
     <li><b>It can miss well-known patents.</b> In tests with famous patents described in plain words (slide-to-unlock, a bladeless fan, one-click buying), the app found closely related patents every time but missed the original famous patent each time, because the AI-written searches use modern wording. Editing the searches helps.</li>
     <li><b>The AI can make mistakes.</b> Check the quoted evidence for any patent that matters, and open the patent itself via its link.</li>
@@ -259,6 +273,7 @@
     <tr><td><code>app/idea_search.py</code></td><td>The three API steps, the AI instructions (prompts) and the fixed answer formats</td></tr>
     <tr><td><code>app/llm.py</code></td><td>Groq client. Forces the AI to answer in a fixed JSON format, paces calls to stay under the per-minute token limit, retries when rate-limited</td></tr>
     <tr><td><code>app/serpapi.py</code></td><td>SerpApi client for Google Patents search (<code>google_patents</code>) and patent details (<code>google_patents_details</code>)</td></tr>
+    <tr><td><code>app/uspto.py</code></td><td>USPTO Open Data Portal client: application search, and abstract + first claim from the grant or publication XML</td></tr>
     <tr><td><code>app/cache.py</code></td><td>Saves every SerpApi and Groq response in <code>cache/</code>; delete that folder to clear it</td></tr>
     <tr><td><code>static/idea.html</code></td><td>The Idea search page; it calls the steps in order and renders the results</td></tr>
   </table></div>
@@ -267,9 +282,11 @@
     <tr><td><code>POST /api/idea/analyze</code></td><td>idea → features, CPC guesses, 4 searches</td><td>0</td></tr>
     <tr><td><code>POST /api/idea/candidates</code></td><td>runs the searches, merges, screens, picks the top N</td><td>1 per search</td></tr>
     <tr><td><code>POST /api/idea/compare</code></td><td>details + feature comparison for up to 5 patents</td><td>1 per patent</td></tr>
-    <tr><td><code>GET /api/llm/status</code>, <code>GET /api/account</code></td><td>check the Groq and SerpApi keys</td><td>0</td></tr>
+    <tr><td><code>POST /api/idea/uspto/candidates</code></td><td>runs the USPTO title searches, merges, screens, picks the top N</td><td>0 (free)</td></tr>
+    <tr><td><code>POST /api/idea/uspto/compare</code></td><td>USPTO full text + feature comparison for up to 5 patents</td><td>0 (free)</td></tr>
+    <tr><td><code>GET /api/llm/status</code>, <code>GET /api/account</code>, <code>GET /api/uspto/status</code></td><td>check the Groq, SerpApi and USPTO keys</td><td>0</td></tr>
   </table></div>
-  <p>The API keys (<code>SERPAPI_API_KEY</code>, <code>GROQ_API_KEY</code>) stay on the server in <code>.env</code>; the browser never sees them. Each step is stateless: the page sends the output of one step as the input to the next. Full endpoint details are in the <a href="/docs">Swagger UI</a>.</p>
+  <p>The API keys (<code>SERPAPI_API_KEY</code>, <code>GROQ_API_KEY</code>, <code>USPTO_API_KEY</code>) stay on the server in <code>.env</code>; the browser never sees them. Each step is stateless: the page sends the output of one step as the input to the next. Full endpoint details are in the <a href="/docs">Swagger UI</a>.</p>
 
   <p><a class="cta" href="/idea">Try Idea search →</a></p>
 </main>
